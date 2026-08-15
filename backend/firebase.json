@@ -1,12 +1,12 @@
 {
+  "emulators": {
+    "auth": { "port": 9099 },
+    "firestore": { "port": 8080 },
+    "functions": { "port": 5001 },
+    "ui": { "enabled": true, "port": 4000 },
+    "singleProjectMode": true
+  },
   "functions": {
     "source": "functions"
-  },
-  "emulators": {
-    "auth": 9099,
-    "firestore": 8080,
-    "functions": 5001,
-    "ui": 4000,
-    "single-project-mode": true
   }
 }

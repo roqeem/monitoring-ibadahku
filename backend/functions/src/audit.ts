@@ -1,5 +1,5 @@
-import * as admin from 'firebase-admin';
-import { AuditLog, auditLogsPath } from './schema';
+import { getFirestore, FieldValue, Timestamp, Firestore } from 'firebase-admin/firestore';
+import { AuditLog, auditLogsPath } from './schema.js';
 
 /**
  * Audit logging utilities.
@@ -7,7 +7,7 @@ import { AuditLog, auditLogsPath } from './schema';
  */
 
 export async function writeAudit(
-  db: admin.firestore.Firestore,
+  db: Firestore,
   event: AuditLog['event'],
   opts: {
     actorId?: string;
@@ -28,7 +28,7 @@ export async function writeAudit(
     resourceIdHash: opts.resourceId ? hashId(opts.resourceId) : null,
     result: opts.result,
     failureCode: opts.failureCode ?? null,
-    occurredAt: admin.firestore.FieldValue.serverTimestamp() as admin.firestore.Timestamp,
+    occurredAt: FieldValue.serverTimestamp() as Timestamp,
     sessionIdHash: opts.sessionId ? hashId(opts.sessionId) : null,
   };
 
@@ -36,9 +36,10 @@ export async function writeAudit(
   await db.collection('auditLogs').doc(auditId).set(log, { merge: true });
 }
 
+import * as crypto from 'crypto';
+
 /** Simple non-cryptographic hash for identifier redaction in audit logs. */
 export function hashId(value: string): string {
-  const crypto = require('crypto') as typeof import('crypto');
   return crypto.createHash('sha256').update(value).digest('hex').slice(0, 16);
 }
 

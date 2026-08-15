@@ -1,20 +1,31 @@
 /* eslint-disable @typescript-eslint/no-var-requires */
-import * as admin from 'firebase-admin';
+import { initializeApp, getApps, App } from 'firebase-admin/app';
+import { getFirestore, Firestore } from 'firebase-admin/firestore';
 
 // Lazy initialization to support offline testing
-let _app: admin.app.App | undefined;
+let _app: App | undefined;
 
-export function getApp(): admin.app.App {
+export function getApp(): App {
   if (!_app) {
-    _app = admin.initializeApp();
+    if (getApps().length === 0) {
+      _app = initializeApp();
+    } else {
+      _app = getApps()[0];
+    }
   }
   return _app;
 }
 
-import { createInvitation } from './invitations';
-import { acceptInvitation, revokeAccess, stopMonitoring, onUserDeletedTrigger } from './relationships';
-import { sendStandardReminder } from './reminders';
-import { getFamilyDigest } from './digest';
+// Initialize Firestore lazily
+export function getDb(): Firestore {
+  getApp(); // Ensure app is initialized
+  return getFirestore();
+}
+
+import { createInvitation } from './invitations.js';
+import { acceptInvitation, revokeAccess, stopMonitoring, onUserDeletedTrigger } from './relationships.js';
+import { sendStandardReminder } from './reminders.js';
+import { getFamilyDigest } from './digest.js';
 
 export {
   createInvitation,

@@ -1,13 +1,21 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
-import * as admin from 'firebase-admin';
+import { initializeApp, getApps } from 'firebase-admin/app';
+import { getFirestore, Timestamp, Firestore } from 'firebase-admin/firestore';
 import {
   Relationship,
   RelationshipStatus,
   ChildSummary,
   relationshipsPath,
-} from './schema';
+} from './schema.js';
 
-const db = admin.firestore();
+let db: Firestore;
+function getDb(): Firestore {
+  if (!db) {
+    if (getApps().length === 0) initializeApp();
+    db = getFirestore();
+  }
+  return db;
+}
 
 export interface DigestRequest {
   date: string; // YYYY-MM-DD UTC
@@ -44,13 +52,13 @@ export const getFamilyDigest = onCall<DigestRequest>(
       const childId = rel.childId;
 
       // Read child profile (name, photo)
-      const childSnap = await db.doc(`children/${childId}`).get();
+      const childSnap = await getDb().doc(`children/${childId}`).get();
       const childData = childSnap.exists ? childSnap.data() : null;
 
       // Read worship records for date
       // Worship records live in the IbadahKu schema: daily_records/{childId}_{date}
       const recordId = `${childId}_${date}`;
-      const recordSnap = await db.doc(`daily_records/${recordId}`).get();
+      const recordSnap = await getDb().doc(`daily_records/${recordId}`).get();
 
       let completed = 0;
       let pending = 0;
@@ -101,7 +109,7 @@ export const getFamilyDigest = onCall<DigestRequest>(
         completed,
         pending,
         skipped,
-        lastUpdated: (recordSnap.updateTime ?? childSnap.updateTime ?? null) as admin.firestore.Timestamp,
+        lastUpdated: (recordSnap.updateTime ?? childSnap.updateTime ?? null) as Timestamp,
       });
     }
 

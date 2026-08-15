@@ -11,7 +11,7 @@ import {
   ReminderStatus,
   assertActorMatches,
   CURRENT_CONSENT_VERSION,
-} from '../src/schema';
+} from '../../src/schema.js';
 
 describe('schema.ts', () => {
   it('builds consistent Firestore paths', () => {

@@ -1,16 +1,6 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
-// firebase-functions v7 exports onUserDeleted at runtime in v2/identity
-// but omits it from type definitions; cast through untyped binding.
-/* eslint-disable @typescript-eslint/no-var-requires */
-const identityMod = require('firebase-functions/v2/identity') as {
-  onUserDeleted: (
-    opts: { region?: string },
-    handler: (event: { data?: { uid: string } }) => Promise<unknown> | unknown
-  ) => unknown;
-};
-const onUserDeleted = identityMod.onUserDeleted;
-import { setGlobalOptions } from 'firebase-functions/v2';
-import * as admin from 'firebase-admin';
+import { initializeApp, getApps } from 'firebase-admin/app';
+import { getFirestore, Timestamp, FieldValue, Firestore } from 'firebase-admin/firestore';
 import {
   Relationship,
   RelationshipStatus,
@@ -22,10 +12,17 @@ import {
   RelationshipStatus as RS,
   InvitationStatus as IS,
   CURRENT_CONSENT_VERSION,
-} from './schema';
-import { writeAudit, hashId } from './audit';
+} from './schema.js';
+import { writeAudit, hashId } from './audit.js';
 
-const db = admin.firestore();
+let db: Firestore;
+function getDb(): Firestore {
+  if (!db) {
+    if (getApps().length === 0) initializeApp();
+    db = getFirestore();
+  }
+  return db;
+}
 
 export interface AcceptInvitationRequest {
   invitationId: string;
@@ -36,261 +33,241 @@ export interface RelationshipActionRequest {
   relationshipId: string;
 }
 
-/**
- * Accepts an invitation on behalf of the child's IbadahKu account.
- * Validates consent explicitly — child must be the recipient.
- * The child ID in the request MUST match the authenticated UID.
- */
+export async function acceptInvitationLogic(
+  data: AcceptInvitationRequest,
+  callerUid: string,
+  database: Firestore = getDb()
+): Promise<{ relationshipId: string }> {
+  const { invitationId, childId } = data;
+
+  if (callerUid !== childId) {
+    throw new HttpsError(
+      'permission-denied',
+      'Caller UID must match the child accepting the invitation.'
+    );
+  }
+
+  return await database.runTransaction(async (tx) => {
+    const invitationRef = database.doc(invitationsPath(invitationId));
+    const invitationSnap = await tx.get(invitationRef);
+
+    if (!invitationSnap.exists) {
+      throw new HttpsError('not-found', 'Invitation not found.');
+    }
+
+    const invitation = invitationSnap.data() as Invitation & { guardianId: string };
+
+    if (invitation.status !== IS.Pending) {
+      throw new HttpsError(
+        'failed-precondition',
+        `Invitation status is '${invitation.status}', cannot be accepted.`
+      );
+    }
+
+    const expiresAt = invitation.expiresAt.toDate();
+    const now = new Date();
+    if (now > expiresAt) {
+      tx.update(invitationRef, { status: IS.Expired });
+      throw new HttpsError('failed-precondition', 'Invitation has expired.');
+    }
+
+    const relRef = database.collection('relationships').doc();
+    const serverTs = FieldValue.serverTimestamp() as Timestamp;
+    const serverDate = Timestamp.fromDate(now);
+
+    const relationship: Relationship = {
+      relationshipId: relRef.id,
+      guardianId: invitation.guardianId,
+      childId,
+      invitationId,
+      status: RS.Active,
+      consentVersion: CURRENT_CONSENT_VERSION,
+      consentedAt: serverDate,
+      revokedAt: null,
+      revokedBy: null,
+      createdAt: serverDate,
+      updatedAt: serverDate,
+    };
+
+    tx.set(relRef, relationship);
+    tx.update(invitationRef, { status: IS.Accepted, usedAt: serverTs });
+
+    const auditRef = database.collection('auditLogs').doc();
+    tx.set(
+      auditRef,
+      {
+        event: 'relationship_created',
+        actorIdHash: hashId(childId),
+        role: 'child',
+        resourceType: 'relationship',
+        resourceIdHash: hashId(relRef.id),
+        result: 'success',
+        occurredAt: serverTs,
+      },
+      { merge: false }
+    );
+
+    return { relationshipId: relRef.id };
+  });
+}
+
+export async function revokeAccessLogic(
+  data: RelationshipActionRequest,
+  callerUid: string,
+  database: Firestore = getDb()
+): Promise<{ ok: true }> {
+  const childId = callerUid;
+  const { relationshipId } = data;
+
+  return await database.runTransaction(async (tx) => {
+    const relRef = database.doc(relationshipsPath(relationshipId));
+    const relSnap = await tx.get(relRef);
+
+    if (!relSnap.exists) {
+      throw new HttpsError('not-found', 'Relationship not found.');
+    }
+
+    const rel = relSnap.data() as Relationship;
+
+    if (rel.childId !== childId) {
+      throw new HttpsError('permission-denied', 'Only the child can revoke access.');
+    }
+
+    if (rel.status !== RS.Active) {
+      throw new HttpsError(
+        'failed-precondition',
+        `Relationship status is '${rel.status}', cannot be modified.`
+      );
+    }
+
+    const now = Timestamp.now();
+    tx.update(relRef, {
+      status: RS.Revoked,
+      revokedAt: now,
+      revokedBy: childId,
+      updatedAt: now,
+    });
+
+    const auditRef = database.collection('auditLogs').doc();
+    tx.set(
+      auditRef,
+      {
+        event: 'relationship_revoked',
+        actorIdHash: hashId(childId),
+        role: 'child',
+        resourceType: 'relationship',
+        resourceIdHash: hashId(relationshipId),
+        result: 'success',
+        occurredAt: now,
+      },
+      { merge: false }
+    );
+
+    return { ok: true as const };
+  });
+}
+
+export async function stopMonitoringLogic(
+  data: RelationshipActionRequest,
+  callerUid: string,
+  database: Firestore = getDb()
+): Promise<{ ok: true }> {
+  const guardianId = callerUid;
+  const { relationshipId } = data;
+
+  return await database.runTransaction(async (tx) => {
+    const relRef = database.doc(relationshipsPath(relationshipId));
+    const relSnap = await tx.get(relRef);
+
+    if (!relSnap.exists) {
+      throw new HttpsError('not-found', 'Relationship not found.');
+    }
+
+    const rel = relSnap.data() as Relationship;
+
+    if (rel.guardianId !== guardianId) {
+      throw new HttpsError('permission-denied', 'Only the guardian can stop monitoring.');
+    }
+
+    const now = Timestamp.now();
+    tx.update(relRef, {
+      status: RS.Stopped,
+      revokedAt: now,
+      revokedBy: guardianId,
+      updatedAt: now,
+    });
+
+    const auditRef = database.collection('auditLogs').doc();
+    tx.set(
+      auditRef,
+      {
+        event: 'relationship_stopped',
+        actorIdHash: hashId(guardianId),
+        role: 'guardian',
+        resourceType: 'relationship',
+        resourceIdHash: hashId(relationshipId),
+        result: 'success',
+        occurredAt: now,
+      },
+      { merge: false }
+    );
+
+    return { ok: true as const };
+  });
+}
+
 export const acceptInvitation = onCall<AcceptInvitationRequest>(
   { region: 'asia-southeast2' },
   async (request) => {
-    const authUser = request.auth;
-    if (!authUser) {
+    if (!request.auth) {
       throw new HttpsError('unauthenticated', 'Authentication required.');
     }
-
-    const { invitationId, childId } = request.data as AcceptInvitationRequest;
-    const callerUid = authUser.uid;
-
-    // The caller must be the child accepting — verified by UID match.
-    if (callerUid !== childId) {
-      throw new HttpsError(
-        'permission-denied',
-        'Caller UID must match the child accepting the invitation.'
-      );
-    }
-
-    return await db.runTransaction(async (tx) => {
-      const invitationRef = db.doc(invitationsPath(invitationId));
-      const invitationSnap = await tx.get(invitationRef);
-
-      if (!invitationSnap.exists) {
-        throw new HttpsError('not-found', 'Invitation not found.');
-      }
-
-      const invitation = invitationSnap.data() as Invitation & { guardianId: string };
-
-      if (invitation.status !== IS.Pending) {
-        throw new HttpsError(
-          'failed-precondition',
-          `Invitation status is '${invitation.status}', cannot be accepted.`
-        );
-      }
-
-      const expiresAt = invitation.expiresAt.toDate();
-      const now = new Date();
-      if (now > expiresAt) {
-        tx.update(invitationRef, { status: IS.Expired });
-        throw new HttpsError('failed-precondition', 'Invitation has expired.');
-      }
-
-      const relRef = db.collection('relationships').doc();
-      const serverTs = admin.firestore.FieldValue.serverTimestamp() as admin.firestore.Timestamp;
-      const serverDate = admin.firestore.Timestamp.fromDate(now);
-
-      const relationship: Relationship = {
-        relationshipId: relRef.id,
-        guardianId: invitation.guardianId,
-        childId,
-        invitationId,
-        status: RS.Active,
-        consentVersion: CURRENT_CONSENT_VERSION,
-        consentedAt: serverDate,
-        revokedAt: null,
-        revokedBy: null,
-        createdAt: serverDate,
-        updatedAt: serverDate,
-      };
-
-      tx.set(relRef, relationship);
-      tx.update(invitationRef, { status: IS.Accepted, usedAt: serverTs });
-
-      const auditRef = db.collection(auditLogsPath('x')).doc();
-      tx.set(
-        auditRef,
-        {
-          event: 'relationship_created',
-          actorIdHash: hashId(childId),
-          role: 'child',
-          resourceType: 'relationship',
-          resourceIdHash: hashId(relRef.id),
-          result: 'success',
-          occurredAt: serverTs,
-        },
-        { merge: false }
-      );
-
-      return { relationshipId: relRef.id };
-    });
+    return acceptInvitationLogic(request.data, request.auth.uid);
   }
 );
 
-/**
- * Child revokes access for a specific guardian.
- */
 export const revokeAccess = onCall<RelationshipActionRequest>(
   { region: 'asia-southeast2' },
   async (request) => {
-    const authUser = request.auth;
-    if (!authUser) {
+    if (!request.auth) {
       throw new HttpsError('unauthenticated', 'Authentication required.');
     }
-    const childId = authUser.uid;
-    const { relationshipId } = request.data as RelationshipActionRequest;
-
-    return await db.runTransaction(async (tx) => {
-      const relRef = db.doc(relationshipsPath(relationshipId));
-      const relSnap = await tx.get(relRef);
-
-      if (!relSnap.exists) {
-        throw new HttpsError('not-found', 'Relationship not found.');
-      }
-
-      const rel = relSnap.data() as Relationship;
-
-      if (rel.childId !== childId) {
-        throw new HttpsError('permission-denied', 'Only the child can revoke access.');
-      }
-
-      if (rel.status !== RS.Active) {
-        throw new HttpsError(
-          'failed-precondition',
-          `Relationship status is '${rel.status}', cannot be modified.`
-        );
-      }
-
-      const now = admin.firestore.Timestamp.now();
-      tx.update(relRef, {
-        status: RS.Revoked,
-        revokedAt: now,
-        revokedBy: childId,
-        updatedAt: now,
-      });
-
-      const auditRef = db.collection(auditLogsPath('x')).doc();
-      tx.set(
-        auditRef,
-        {
-          event: 'relationship_revoked',
-          actorIdHash: hashId(childId),
-          role: 'child',
-          resourceType: 'relationship',
-          resourceIdHash: hashId(relationshipId),
-          result: 'success',
-          occurredAt: now,
-        },
-        { merge: false }
-      );
-
-      return { ok: true };
-    });
+    return revokeAccessLogic(request.data, request.auth.uid);
   }
 );
 
-/**
- * Guardian stops monitoring a child (no effect on child data).
- */
 export const stopMonitoring = onCall<RelationshipActionRequest>(
   { region: 'asia-southeast2' },
   async (request) => {
-    const authUser = request.auth;
-    if (!authUser) {
+    if (!request.auth) {
       throw new HttpsError('unauthenticated', 'Authentication required.');
     }
-    const guardianId = authUser.uid;
-    const { relationshipId } = request.data as RelationshipActionRequest;
-
-    return await db.runTransaction(async (tx) => {
-      const relRef = db.doc(relationshipsPath(relationshipId));
-      const relSnap = await tx.get(relRef);
-
-      if (!relSnap.exists) {
-        throw new HttpsError('not-found', 'Relationship not found.');
-      }
-
-      const rel = relSnap.data() as Relationship;
-
-      if (rel.guardianId !== guardianId) {
-        throw new HttpsError('permission-denied', 'Only the guardian can stop monitoring.');
-      }
-
-      const now = admin.firestore.Timestamp.now();
-      tx.update(relRef, {
-        status: RS.Stopped,
-        revokedAt: now,
-        revokedBy: guardianId,
-        updatedAt: now,
-      });
-
-      const auditRef = db.collection(auditLogsPath('x')).doc();
-      tx.set(
-        auditRef,
-        {
-          event: 'relationship_stopped',
-          actorIdHash: hashId(guardianId),
-          role: 'guardian',
-          resourceType: 'relationship',
-          resourceIdHash: hashId(relationshipId),
-          result: 'success',
-          occurredAt: now,
-        },
-        { merge: false }
-      );
-
-      return { ok: true };
-    });
+    return stopMonitoringLogic(request.data, request.auth.uid);
   }
 );
 
-/**
- * Auth trigger: when a user account is deleted, soft-disable their
- * relationships so they no longer count as active, without touching worship data.
- */
-export const onUserDeletedTrigger = onUserDeleted({ region: 'asia-southeast2' }, async (event) => {
+// Auth trigger: lazy dynamic import because v7 omits types
+let onUserDeletedPromise: Promise<any> | null = null;
+async function getOnUserDeleted(): Promise<any> {
+  if (!onUserDeletedPromise) {
+    onUserDeletedPromise = import('firebase-functions/v2/identity').then((m: any) => m.onUserDeleted);
+  }
+  return onUserDeletedPromise;
+}
+
+export const onUserDeletedTrigger = (async () => {
+  const onUserDeleted = await getOnUserDeleted();
+  return onUserDeleted({ region: 'asia-southeast2' }, async (event: { data?: { uid: string } }) => {
     const uid = event.data?.uid;
-    if (!uid) {
-      return undefined;
-    }
-    const now = admin.firestore.Timestamp.now();
-
-    const guardianRels = await db
-      .collection('relationships')
-      .where('guardianId', '==', uid)
-      .where('status', '==', RS.Active)
-      .get();
-
-    const childRels = await db
-      .collection('relationships')
-      .where('childId', '==', uid)
-      .where('status', '==', RS.Active)
-      .get();
-
-    const batch = db.batch();
-    guardianRels.forEach((doc) => {
-      batch.update(doc.ref, {
-        status: RS.UserDeleted,
-        revokedAt: now,
-        revokedBy: uid,
-        updatedAt: now,
-      });
-    });
-
-    childRels.forEach((doc) => {
-      batch.update(doc.ref, {
-        status: RS.UserDeleted,
-        revokedAt: now,
-        revokedBy: uid,
-        updatedAt: now,
-      });
-    });
-
+    if (!uid) return;
+    const now = Timestamp.now();
+    const database = getDb();
+    const guardianRels = await database.collection('relationships').where('guardianId', '==', uid).where('status', '==', RS.Active).get();
+    const childRels = await database.collection('relationships').where('childId', '==', uid).where('status', '==', RS.Active).get();
+    const batch = database.batch();
+    guardianRels.forEach((doc) => batch.update(doc.ref, { status: RS.UserDeleted, revokedAt: now, revokedBy: uid, updatedAt: now }));
+    childRels.forEach((doc) => batch.update(doc.ref, { status: RS.UserDeleted, revokedAt: now, revokedBy: uid, updatedAt: now }));
     await batch.commit();
-
-    await writeAudit(db, 'user_deleted', {
-      actorId: hashId(uid),
-      role: 'system',
-      result: 'success',
-    });
-
-    return undefined;
+    await writeAudit(database, 'user_deleted', { actorId: hashId(uid), role: 'system', result: 'success' });
   });
+})();
