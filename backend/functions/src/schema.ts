@@ -80,7 +80,7 @@ export interface Reminder {
 
 export interface AuditLog {
   event: string;
-  actorId?: string | null;
+  actorIdHash?: string | null;
   role: 'guardian' | 'child' | 'system';
   resourceType?: string | null;
   resourceIdHash?: string | null;

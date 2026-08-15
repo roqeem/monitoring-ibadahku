@@ -1,8 +1,7 @@
 /* eslint-disable @typescript-eslint/no-var-requires */
 import * as admin from 'firebase-admin';
-import { onRequest } from 'firebase-functions/v2/https';
 
-// Lazy initialization to support unit testing without auto-connecting
+// Lazy initialization to support offline testing
 let _app: admin.app.App | undefined;
 
 export function getApp(): admin.app.App {
@@ -12,7 +11,24 @@ export function getApp(): admin.app.App {
   return _app;
 }
 
-// Health endpoint for sanity checking deployment
+import { createInvitation } from './invitations';
+import { acceptInvitation, revokeAccess, stopMonitoring, onUserDeletedTrigger } from './relationships';
+import { sendStandardReminder } from './reminders';
+import { getFamilyDigest } from './digest';
+
+export {
+  createInvitation,
+  acceptInvitation,
+  revokeAccess,
+  stopMonitoring,
+  onUserDeletedTrigger,
+  sendStandardReminder,
+  getFamilyDigest,
+};
+
+// Health endpoint
+import { onRequest } from 'firebase-functions/v2/https';
+
 export const health = onRequest(
   { region: 'asia-southeast2' },
   (_req, res) => {
@@ -20,5 +36,4 @@ export const health = onRequest(
   }
 );
 
-// Exported for testability
 export const ready = true;

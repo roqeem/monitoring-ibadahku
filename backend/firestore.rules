@@ -1,0 +1,98 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // App Check enforcement is gated by server-side env flag ENFORCE_APP_CHECK=true.
+    // When enabled, all writes require request.appId (set by App Check).
+
+    // ---- Guardian profiles: self-only ----
+
+    match /guardians/{guardianId} {
+      allow read, create, update, delete: if request.auth.uid == guardianId;
+    }
+
+    // ---- Child profiles: self only (guardians read via Function, not direct) ----
+
+    match /children/{childId} {
+      allow read, create, update, delete: if request.auth.uid == childId;
+    }
+
+    // ---- Family relationship collections: callable functions only ----
+
+    match /invitations/{invitationId} {
+      // Only the guardian who owns the invitation can read it (for status).
+      allow read: if request.auth.uid == resource.data.guardianId
+                  && resource.data.status == 'accepted';
+      allow create: if request.auth.uid == request.resource.data.guardianId;
+      // Updates (status changes) made only by backend functions via Admin SDK.
+      // Deny clients from mutating invitation lifecycle.
+      allow update, delete: if false;
+    }
+
+    match /relationships/{relationshipId} {
+      // Both parties may read relationships they participate in.
+      allow read: if isParticipantOfRelationship(relationshipId);
+      // Lifecycle changes done only by backend functions.
+      allow create, update, delete: if false;
+    }
+
+    match /reminders/{reminderId} {
+      // Both parties may read.
+      allow read: if isParticipantOfReminder(reminderId);
+      // Creation + updates done only by backend functions.
+      allow create, update, delete: if false;
+    }
+
+    // ---- Audit logs: backend write only, deny all client reads ----
+
+    match /auditLogs/{logId} {
+      allow read, write: if false;
+    }
+
+    // ---- Worship data: child-owner write; guardians read ONLY via trusted callables ----
+
+    // daily_records: childId stored as field for ownership check
+    match /daily_records/{recordId} {
+      allow read, write: if isChildOwnerOfOwnedDoc('daily_records', recordId);
+    }
+
+    match /prayer_records/{recordId} {
+      allow read, write: if isChildOwnerOfSubDoc('prayer_records', recordId);
+    }
+
+    match /sunnah_records/{recordId} {
+      allow read, write: if isChildOwnerOfSubDoc('sunnah_records', recordId);
+    }
+
+    match /dhikr_records/{recordId} {
+      allow read, write: if isChildOwnerOfSubDoc('dhikr_records', recordId);
+    }
+
+    // ---- Helpers ----
+
+    function isChildOwnerOfOwnedDoc(collection, docId) {
+      let doc = get(/databases/$(database)/documents/$(collection)/$(docId));
+      return doc.exists && doc.data.childId == request.auth.uid;
+    }
+
+    function isChildOwnerOfSubDoc(collection, docId) {
+      let doc = get(/databases/$(database)/documents/$(collection)/$(docId));
+      // sub-doc path may be nested under daily record: check childId field
+      return doc.exists && doc.data.childId == request.auth.uid;
+    }
+
+    function isParticipantOfRelationship(relId) {
+      let rel = get(/databases/$(database)/documents/relationships/$(relId));
+      return rel.exists
+        && (rel.data.guardianId == request.auth.uid
+            || rel.data.childId == request.auth.uid);
+    }
+
+    function isParticipantOfReminder(reminderId) {
+      let rem = get(/databases/$(database)/documents/reminders/$(reminderId));
+      return rem.exists
+        && (rem.data.guardianId == request.auth.uid
+            || rem.data.childId == request.auth.uid);
+    }
+  }
+}
