@@ -1,0 +1,6 @@
+{
+  "projects": {
+    "staging": "monitor-ibadahku-dev",
+    "prod": "monitor-ibadahku"
+  }
+}

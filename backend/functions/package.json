@@ -1,0 +1,29 @@
+{
+  "name": "functions",
+  "engines": {
+    "node": "18"
+  },
+  "main": "src/index.ts",
+  "scripts": {
+    "build": "tsc",
+    "serve": "firebase emulators:start --only functions,firestore",
+    "test": "mocha --parallel --require ts-node/register 'test/**/*.test.ts'",
+    "lint": "eslint src test"
+  },
+  "dependencies": {
+    "firebase-admin": "^12.5.0",
+    "firebase-functions": "^7.3.2"
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^4.0.1",
+    "@types/mocha": "^10.0.6",
+    "@types/node": "^20.14.0",
+    "@types/sinon": "^17.0.3",
+    "firebase-functions-test": "^3.4.0",
+    "mocha": "^10.4.0",
+    "prettier": "^3.3.0",
+    "sinon": "^22.0.0",
+    "ts-node": "^10.9.2",
+    "typescript": "5.4.5"
+  }
+}
