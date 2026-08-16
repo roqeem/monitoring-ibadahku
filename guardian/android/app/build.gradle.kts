@@ -1,18 +1,14 @@
 plugins {
     id("com.android.application")
-    id("com.google.gms.google-services")
     id("kotlin-android")
-    id("dev.flutter.plugin.consolidate")
+    id("dev.flutter.flutter-gradle-plugin")
+    id("com.google.gms.google-services")
 }
 
 android {
     namespace = "id.ibadahku.monitoring"
     compileSdk = flutter.compileSdkVersion
-
-    sourceSets {
-        getMainSourceSet().java.srcDirs("src/main/kotlin")
-        getMainSourceSet().kotlin.srcDirs("src/main/kotlin")
-    }
+    ndkVersion = flutter.ndkVersion
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
@@ -25,18 +21,11 @@ android {
 
     defaultConfig {
         applicationId = "id.ibadahku.monitoring"
-        minSdk = flutter.minSdkVersion
+        // Firebase Auth/Messaging butuh minSdk 23+
+        minSdk = maxOf(flutter.minSdkVersion, 23)
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
-    }
-
-    buildFeatures {
-        compose = false
-    }
-
-    lintOptions {
-        checkReleaseLoads = false
     }
 
     buildTypes {
@@ -48,14 +37,4 @@ android {
 
 flutter {
     source = "../.."
-}
-
-dependencies {
-    implementation("com.google.firebase:firebase-bom:33.5.1")
-    implementation("com.google.firebase:firebase-auth")
-    implementation("com.google.firebase:firebase-firestore")
-    implementation("com.google.firebase:firebase-messaging")
-    implementation("com.google.firebase:firebase-analytics")
-    implementation("com.google.android.gms:play-services-base:18.5.0")
-    implementation("com.google.firebase:firebase-common:20.5.0")
 }
