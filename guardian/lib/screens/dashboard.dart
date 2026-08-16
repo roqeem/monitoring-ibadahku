@@ -5,6 +5,7 @@ import '../state/app_state.dart';
 import '../services/api_service.dart';
 import '../models/models.dart';
 import '../theme/app_theme.dart';
+import 'child/child_detail_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -128,14 +129,9 @@ class _DashboardState extends State<DashboardScreen> {
                         ),
                         trailing: Icon(Icons.chevron_right, size: 20),
                         onTap: () {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text(
-                                '${c.displayName ?? c.childId}: '
-                                '${c.completed} selesai, '
-                                '${c.pending} belum, '
-                                '${c.skipped} dilewati',
-                              ),
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => ChildDetailScreen(child: c),
                             ),
                           );
                         },

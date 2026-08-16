@@ -9,6 +9,18 @@ const Color kDone = Color(0xFF2E7D32);
 const Color kPending = Color(0xFFF9A825);
 const Color kMissed = Color(0xFFC62828);
 
+/// Alias konsisten yang dipakai seluruh UI.
+abstract final class AppColors {
+  static const primary = kPrimary;
+  static const primaryLight = kPrimaryLight;
+  static const accent = kAccent;
+  static const textPrimary = kTextPrimary;
+  static const textSecondary = kTextSecondary;
+  static const done = kDone;
+  static const pending = kPending;
+  static const missed = kMissed;
+}
+
 ThemeData buildLightTheme() {
   final base = ThemeData(
     brightness: Brightness.light,

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 
 import 'screens/login_screen.dart';
 import 'screens/dashboard.dart';
@@ -10,9 +11,17 @@ import 'services/api_service.dart';
 import 'state/app_state.dart';
 import 'theme/app_theme.dart';
 
+@pragma('vm:entry-point')
+Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  // Guardian app menerima sedikit FCM (pengingat dikirim, bukan diterima).
+  // Handler tetap didaftarkan agar Android tidak crash saat FCM tiba
+  // saat app mati.
+}
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp();
+  FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
   runApp(const GuardianApp());
 }
 

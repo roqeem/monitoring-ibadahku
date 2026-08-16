@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:intl/intl.dart';
 import '../../services/api_service.dart';
 import '../../state/app_state.dart';
 import '../../theme/app_theme.dart';
@@ -16,7 +18,6 @@ class InvitationsScreen extends StatefulWidget {
 class _InvitationsScreenState extends State<InvitationsScreen> {
   final _tokenCtrl = TextEditingController();
   bool _generating = false;
-  String? _generatedCode;
 
   @override
   Widget build(BuildContext context) {
@@ -36,10 +37,6 @@ class _InvitationsScreenState extends State<InvitationsScreen> {
             return const Center(child: CircularProgressIndicator());
           }
           final docs = snapshot.data!.docs;
-          String? sharedToken;
-          if (_generatedCode != null) {
-            // Retrieve token agar orang tua bisa menyalinnya
-          }
           return ListView(
             padding: const EdgeInsets.all(16),
             children: [
@@ -122,7 +119,6 @@ class _InvitationsScreenState extends State<InvitationsScreen> {
       final id = await ApiService().createInvitation(token);
 
       setState(() {
-        _generatedCode = token;
         _tokenCtrl.clear();
       });
 
@@ -187,10 +183,10 @@ class _InvitationsScreenState extends State<InvitationsScreen> {
 
   Future<void> _copyToken(BuildContext context, String invitationId) async {
     final token = await ApiService().getInvitationToken(invitationId);
-    if (token != null) {
-      // In production: use clipboard package
+    if (token != null && context.mounted) {
+      await Clipboard.setData(ClipboardData(text: token));
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Kode undangan: $token')),
+        SnackBar(content: Text('Kode undangan disalin: $token')),
       );
     }
   }
