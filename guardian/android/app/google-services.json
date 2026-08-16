@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "145431266851",
+    "project_id": "ibadahku-899dc",
+    "storage_bucket": "ibadahku-899dc.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:145431266851:android:2de7083104ac427273d396",
+        "android_client_info": {
+          "package_name": "id.ibadahku.monitoring"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyA94t6EOG616Y3Uz4LdLDH5f4N-hd9UYmo"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
