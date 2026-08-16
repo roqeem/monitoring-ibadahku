@@ -7,7 +7,6 @@ import 'screens/login_screen.dart';
 import 'screens/dashboard.dart';
 import 'screens/family/invitations_screen.dart';
 import 'services/firebase_service.dart';
-import 'services/api_service.dart';
 import 'state/app_state.dart';
 import 'theme/app_theme.dart';
 
