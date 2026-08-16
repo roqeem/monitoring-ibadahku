@@ -1,5 +1,8 @@
+import 'dart:convert';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_functions/firebase_functions.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:http/http.dart' as http;
 import '../models/models.dart';
 
 /// Layanan API untuk memanggil callable Firebase Functions
@@ -7,15 +10,52 @@ import '../models/models.dart';
 ///
 /// Guardian TIDAK pernah membaca Firestore secara langsung untuk data anak —
 /// semua akses lewat callable (`getFamilyDigest`, `sendStandardReminder`).
+///
+/// `firebase_functions` package tidak tersedia untuk Dart 3.5 (Flutter 3.24),
+/// jadi callable dipanggil via HTTP: POST ke URL fungsi dengan header
+/// `Authorization: Bearer <idToken>` dan body `{"data": {...}}`.
 class ApiService {
   final FirebaseFirestore _db = FirebaseFirestore.instance;
+
+  /// Region & project harus sama dengan deploy backend.
+  /// Ganti [projectId] sesuai proyek Firebase yang dipakai (staging:
+  /// `monitor-ibadahku-dev`).
+  static const String _region = 'asia-southeast2';
+  static const String projectId = 'monitor-ibadahku-dev';
+
+  String _fnUrl(String name) =>
+      'https://$_region-$projectId.cloudfunctions.net/$name';
+
+  Future<dynamic> _call(String name, Map<String, dynamic> data) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      throw ApiException('unauthenticated', 'Belum masuk.');
+    }
+    final token = await user.getIdToken();
+    final resp = await http.post(
+      Uri.parse(_fnUrl(name)),
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $token',
+      },
+      body: jsonEncode({'data': data}),
+    );
+    final body = jsonDecode(resp.body) as Map<String, dynamic>;
+    if (resp.statusCode != 200 || body['error'] != null) {
+      final err = body['error'] as Map<String, dynamic>?;
+      final code = err?['status'] as String? ?? 'unknown';
+      final message = (err?['message'] as String?)?.replaceFirst(
+              'functions/', '') ??
+          'Gagal (${resp.statusCode})';
+      throw ApiException(code, message);
+    }
+    return body['result'];
+  }
 
   /// Buat undangan monitoring untuk seorang anak.
   /// [tokenPlain] adalah kode acak yang akan dibagikan kepada anak.
   Future<String> createInvitation(String tokenPlain) async {
-    final func = FirebaseFunctions.instance.httpsCallable('createInvitation');
-    final result = await func.call({'tokenPlain': tokenPlain});
-    final data = result.data as Map<String, dynamic>;
+    final data = await _call('createInvitation', {'tokenPlain': tokenPlain});
     final id = data['invitationId'] as String;
     // Simpan token agar orang tua bisa membagikannya
     await _db.collection('invitation_tokens').doc(id).set({
@@ -34,34 +74,25 @@ class ApiService {
   }
 
   /// Kirim reminder standar ke anak.
-  /// Melempar [ReminderException] bila rate-limited atau limit harian tercapai.
+  /// Melempar [ApiException] bila rate-limited atau limit harian tercapai.
   Future<String?> sendStandardReminder(
     String childId,
     String worshipDate,
     String activityKey,
     String templateKey,
   ) async {
-    final func =
-        FirebaseFunctions.instance.httpsCallable('sendStandardReminder');
-    try {
-      final result = await func.call({
-        'childId': childId,
-        'worshipDate': worshipDate,
-        'activityKey': activityKey,
-        'templateKey': templateKey,
-      });
-      final data = result.data as Map<String, dynamic>;
-      return data['reminderId'] as String?;
-    } on FirebaseFunctionsException catch (e) {
-      throw ReminderException(e.code, e.message ?? 'Gagal mengirim pengingat.');
-    }
+    final data = await _call('sendStandardReminder', {
+      'childId': childId,
+      'worshipDate': worshipDate,
+      'activityKey': activityKey,
+      'templateKey': templateKey,
+    });
+    return data['reminderId'] as String?;
   }
 
   /// Dapatkan ringkasan ibadah keluarga untuk satu tanggal.
   Future<List<ChildSummary>> getFamilyDigest(String date) async {
-    final func = FirebaseFunctions.instance.httpsCallable('getFamilyDigest');
-    final result = await func.call({'date': date});
-    final data = result.data as Map<String, dynamic>;
+    final data = await _call('getFamilyDigest', {'date': date});
     final children = data['children'] as List<dynamic>;
     return children
         .map((c) => ChildSummary(
@@ -128,12 +159,15 @@ class ApiService {
   }
 }
 
-class ReminderException implements Exception {
+class ApiException implements Exception {
   final String code;
   final String message;
-  ReminderException(this.code, this.message);
+  ApiException(this.code, this.message);
 
-  bool get isRateLimited => code == 'resource-exhausted' || code == 'rate_limited';
+  bool get isRateLimited =>
+      code == 'RESOURCE_EXHAUSTED' ||
+      code == 'PERMISSION_DENIED' ||
+      code.toLowerCase().contains('rate');
 
   @override
   String toString() => message;

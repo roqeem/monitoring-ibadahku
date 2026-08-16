@@ -49,7 +49,7 @@ class _ChildDetailScreenState extends State<ChildDetailScreen> {
         backgroundColor: AppColors.done,
       ));
       Navigator.of(context).pop();
-    } on ReminderException catch (e) {
+    } on ApiException catch (e) {
       if (!mounted) return;
       setState(() => _sendResult = e.message);
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
